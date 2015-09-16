@@ -1,0 +1,625 @@
+---
+title: "R software workshop notes"
+author: "Sophia Uddin"
+date: "September 15, 2015"
+output:
+  html_document:
+    fig_caption: yes
+    fig_height: 8
+    fig_width: 8
+    highlight: espresso
+    number_sections: yes
+    self_contained: no
+    theme: cerulean
+    toc: yes
+  word_document: default
+---
+
+#Day 1: Load the data
+##Using read.delim
+
+```{r loaddata}
+counts_raw=read.delim("data/counts-raw.txt.gz")
+counts_norm=read.delim("data/counts-norm.txt.gz")
+```
+
+#Data exploration
+
+What's the distribution of authors in all articles of our data set?
+
+```{r auth_histogram, echo=FALSE, fig.cap="Figure 1: Number of Authors per Article"}
+hist(counts_raw$authorsCount, main="Authors per paper", xlab="# authors")
+```
+
+
+What's the number of facebook shares per article?
+```{r fb_sharecount, echo=FALSE, fig.cap="Figure 2: Number of Facebook Shares per Article"}
+hist(counts_raw$facebookShareCount, main="Facebook Shares per paper", xlab="# facebook shares")
+```
+
+The average number of facebook shares in the data set is `r mean(counts_raw$facebookShareCount) `
+
+#dplyr
+##dplyr subsetting examples
+```{r dplyr}
+library("dplyr")
+```
+```{r makedataframe}
+research=filter(counts_raw, articleType == "Research Article")
+```
+```{r 2006}
+research_2006=filter(research, year == 2006)
+nrow(research_2006)
+```
+Or do it all together:
+```{r combined_seg}
+research_2006_fb =filter(research, year == 2006, facebookCommentCount > 0)
+nrow(research_2006_fb)
+```
+```{r using_or}
+research_2006_fb_tweet =filter(research, year == 2006, facebookCommentCount > 0 | backtweetsCount > 0)
+nrow(research_2006_fb_tweet)
+```
+
+```{r one_more_filt}
+research_2006_fb_tweet_disease =filter(research, year == 2006, facebookCommentCount > 0 | backtweetsCount>0, grepl("Infectious Diseases", plosSubjectTags))
+nrow(research_2006_fb_tweet_disease)
+```
+```{r givecols}
+colnames(research)
+```
+```{r}
+article_info=select(research, doi, pubDate, journal, title, articleType, authorsCount)
+```
+Or do this to select all in between columns:
+```{r select_range}
+article_info=select(research, doi:authorsCount)
+colnames(article_info)
+```
+
+To select all columns with a certain word:
+Any column with the pattern "Count" will be included in this new dataframe, except for authors count, plus f1000Factor and Wikipedia citations:
+```{r contains_cmd}
+metrics=select(research, contains("Count"), -authorsCount, f1000Factor, wikipediaCites)
+colnames(metrics)
+```
+Simple subsetting: these 2 options are the same.
+```{r colrefs}
+head(select(research, journal))
+head(select(research, 3))
+```
+Filtering rows requires a logical vector.  
+This will give us the first 3 rows of article info:
+```{r filtrows}
+slice(article_info, 1:3)
+```
+
+###dplyr subsetting challenge
+
+Find all articles that fit the following:  
+
+* Published in 2008 or prior (year)   
+* Has more than 1,000 pdf downloads (pdfDownloadsCount)    
+* Is contained in more than 15 Mendeley libraries (mendeleyReadersCount)    
+* Has fewer than 10 citations as of 2011 (wosCountThru2011)    
+
+```{r challenge2}
+low_cite=filter(research, year <=2008, 
+                pdfDownloadsCount>1000, 
+                mendeleyReadersCount>15, 
+                wosCountThru2011<10)
+nrow(low_cite)
+select(low_cite, title)
+```
+There are `r nrow(low_cite)` articles that fit the above criteria.
+You can see their titles in the output above.
+
+## Chaining commands with dplyr
+dplyr is designed to pipe together many little commands in one long line.
+The pipe character in R is %>% and pipes output of one command into input of the next, without printing it.
+
+```{r}
+facebook_2006 = research %>% filter(year == 2006) %>%
+                select(contains("facebook"))
+head(facebook_2006)
+
+```
+
+To look quickly without saving:
+```{r}
+research %>% filter(year == 2006) %>% select(contains("facebook"))%>% head
+```
+
+Arrange, works similar to function order:
+```{r}
+research %>% arrange(authorsCount, wosCountThru2011) %>% 
+  select(authorsCount, wosCountThru2011) %>% slice(200:210)
+```
+
+Descending order:
+```{r}
+research %>% arrange(desc(authorsCount, wosCountThru2011)) %>% 
+  select(authorsCount, wosCountThru2011) %>% slice(1:10)
+```
+
+### dplyr challenges using pipes
+
+1. Using a chain of pipes, output the titles of the three research articles with the largest 2011 citation count.
+
+```{r}
+research %>% arrange(desc(wosCountThru2011)) %>% slice(1:3) %>%
+  select(title)
+```
+
+2. Using a chain of pipes, output the author count, title, journal, and subject tags (plosSubjectTags) of the three research articles with the largest number of authors.
+
+```{r}
+research %>% arrange(desc(authorsCount)) %>% slice(1:3) %>% 
+  select(authorsCount, title, journal, plosSubjectTags) 
+```
+## Summarizing with dplyr
+
+Adding new columns with "mutate":
+```{r}
+research= research %>% mutate(weeksSincePublished=daysSincePublished /7,
+                              yearsSincePublished =   
+                              weeksSincePublished/52)
+research %>% select(contains("Since")) %>% slice(1:10)
+```
+Another way would be: research$weeksSincePublished=daysSincePublished /7 if we are only doing one column.
+
+Using "summarize":
+
+```{r}
+research %>% summarize(plos_mean=mean(plosCommentCount),
+                       plos_sd=sd(plosCommentCount),
+                       num=n())
+```
+Maintains as data frame rather than vector by creating a new variable plos mean, plos sd, etc... keeps in 1 row.
+
+## dplyr "group_by" makes nested for loops unnecessary
+
+For each of the 7 journals, calculate the mean of the tweets column:
+```{r}
+research %>% group_by(journal) %>% summarize(tweets_mean = mean(backtweetsCount))
+```
+
+A real-life example: starting a new project with metadata.
+1000 people, ages, sexes, medical info --> use dplyr to very quickly make a table of data.
+
+To do by journal AND year: 
+```{r}
+research %>% group_by(journal,year) %>% summarize(tweets_mean = mean(backtweetsCount))
+```
+
+### dplyr "summarize" challenge
+Create a new data frame, tweets _ per _journal, that for each journal contains the total number of articles, the mean number of tweets received by articles in that journal, and the standard error of the mean (SEM) of the number of tweets. The SEM is the standard deviation divided by the square root of the sample size (i.e. the number of articles).
+
+```{r}
+tweets_per_journal=research %>% group_by(journal) %>%
+  summarize(tot_articles = n(), #n() gives number of elements in category
+            mean_tweets=mean(backtweetsCount) ,
+            sem_tweets=sd(backtweetsCount)/ sqrt(tot_articles))
+tweets_per_journal
+```
+#ggplot2
+Keeping things in data frame structure makes it very easy to use this program. Therefore stick to using dplyr for manipulations!
+
+"Aesthetics" are things like x axis, etc. and can be separately modified.
+
+```{r}
+library("ggplot2")
+```
+
+The following code doesn't produce a graph, but needs to happen before you make the graph.
+```{r}
+p=ggplot(data=research, mapping=aes(x=pdfDownloadsCount, y=wosCountThru2011))
+```
+
+Things get "layered" onto the plot using + sign.
+```{r}
+p+geom_point()
+```
+
+Keeping it all in one assignment can simplify things:
+```{r}
+p=ggplot(data=research, mapping=aes(x=pdfDownloadsCount, y=wosCountThru2011)) + geom_point()
+p #display p
+```
+To color-code by journal:
+```{r}
+p=ggplot(data=research, mapping=aes(x=pdfDownloadsCount, y=wosCountThru2011)) + geom_point(aes(color=journal))
+p
+```
+Note the auto-legend.
+
+Another aesthetic to play with is size:
+```{r}
+p=ggplot(data=research, mapping=aes(x=pdfDownloadsCount, y=wosCountThru2011)) + geom_point(aes(size=authorsCount))
+p
+```
+
+
+You can also modify the transparency:
+```{r}
+p=ggplot(data=research, mapping=aes(x=pdfDownloadsCount, y=wosCountThru2011)) + geom_point(aes(alpha=daysSincePublished))
+p
+```
+
+You can also make the data a certain color independent of the data, in which case you DO NOT use aes:
+```{r}
+p=ggplot(data=research, mapping=aes(x=pdfDownloadsCount, y=wosCountThru2011)) + geom_point(color="red")
+p
+```
+
+Now let's add another layer: this one fits a curve to the data!
+```{r}
+p=ggplot(data=research, mapping=aes(x=pdfDownloadsCount, y=wosCountThru2011)) + geom_point(aes(color=journal)) + geom_smooth()
+p
+```
+
+Now we can have one curve per journal:
+```{r}
+p=ggplot(data=research, mapping=aes(x=pdfDownloadsCount, y=wosCountThru2011, color=journal)) + geom_point() + geom_smooth()
+p
+```
+
+###ggplot2 challenge
+Create a scatter plot with daysSincePublished mapped to the x-axis and wosCountThru2011 mapped to the y-axis. Include a loess fit of the data. Set the transparency level (alpha) of the points to 0.5 and color the points according to the journal where the article was published. Make the loess curve red.
+
+```{r}
+p=ggplot(data=research, mapping=aes(x=daysSincePublished, y=wosCountThru2011)) + geom_point(aes(color=journal),alpha=0.5) + geom_smooth(color="red")
+p
+```
+
+##Using scales
+Log transform both x and Y axes:
+```{r}
+p=ggplot(data=research, mapping=aes(x=pdfDownloadsCount, y=wosCountThru2011)) + geom_point(aes(color=journal)) + geom_smooth()
+p + scale_x_log10() + scale_y_log10()
+```
+Note that you cannot now fit a loess curve because of infinite values due to the log scale.
+
+Fix this by adding 1 to possible zero counts:
+```{r}
+p=ggplot(data=research, mapping=aes(x=log10(pdfDownloadsCount+1), y=log10(wosCountThru2011+1))) + geom_point(aes(color=journal)) + geom_smooth()
+p
+```
+
+Making breaks/changing the ticks on the axes:
+```{r}
+p=ggplot(data=research, mapping=aes(x=log10(pdfDownloadsCount+1), y=log10(wosCountThru2011+1))) + geom_point(aes(color=journal)) + geom_smooth() + scale_x_continuous(breaks=c(1,3),labels=c(10,1000)) +
+scale_y_continuous(breaks=c(1,3),labels=c(10,1000))
+p
+```
+
+Setting axis limits: let's limit the Y axis to 10 - 1000:
+```{r}
+p=ggplot(data=research, mapping=aes(x=log10(pdfDownloadsCount+1), y=log10(wosCountThru2011+1))) + geom_point(aes(color=journal)) + geom_smooth() + scale_x_continuous(breaks=c(1,3),labels=c(10,1000)) +
+scale_y_continuous(breaks=c(1,3),labels=c(10,1000), limits = c(1,3))
+p
+```
+
+Controlling the colors of the points:
+
+```{r}
+p+scale_color_manual(values=c("red","green","blue","orange","pink","yellow","purple"))
+```
+scale_ color_ gray() should work to make grayscale, but it doesn't in this version of R.
+
+Using color brewer:
+```{r}
+library("RColorBrewer")
+display.brewer.all(type="qual")
+
+p+scale_color_brewer(palette="Pastel2")
+```
+
+If we were to actually publish this, we would change the labels of the legend:
+```{r}
+p+scale_color_brewer(palette="Dark2", labels = 1:7, name = "PLOS")
+```
+###ggplot2 challenge: modifying scales  
+Update the plot to use a square root transformation instead of log10. Also color the points using the ColorBrewer palette “Accent”.
+
+```{r}
+p=ggplot(data=research, mapping=aes(x=sqrt(pdfDownloadsCount), y=sqrt(wosCountThru2011))) + geom_point(aes(color=journal)) + geom_smooth()+scale_color_brewer(palette="Accent")
+```
+
+Another way to do this would be:
+```{r}
+p=ggplot(data=research, mapping=aes(x=pdfDownloadsCount, y=wosCountThru2011)) + geom_point(aes(color=journal)) + geom_smooth()+scale_color_brewer(palette="Accent")
+p+scale_x_sqrt()+scale_y_sqrt()
+```
+
+## Subplots with ggplot2 (using facets)
+```{r}
+p=ggplot(data=research, mapping=aes(x=sqrt(pdfDownloadsCount), y=sqrt(wosCountThru2011))) + geom_point(aes(color=journal)) + geom_smooth()+scale_color_brewer(palette="Accent")
+p+facet_wrap(~journal)
+```
+
+Changing number of rows and columns:
+```{r}
+p=ggplot(data=research, mapping=aes(x=sqrt(pdfDownloadsCount), y=sqrt(wosCountThru2011))) + geom_point(aes(color=journal)) + geom_smooth()+scale_color_brewer(palette="Accent")
+p+facet_wrap(~journal, ncol=2)
+```
+
+##Using facet_grid
+
+First make a new column for "research" that only has a few variables
+```{r}
+research=mutate(research, immuno=grepl("Immunology", plosSubjectTags))
+p+facet_grid(journal~immuno)
+```
+
+Error because ggplot2 needs to have "research" re-defined after we added a column to it.
+
+In this new plot, the columns show "TRUE" if Immunology is in the subject tags, and "FALSE" if it's not about immunology. The rows are now showing journals.
+```{r}
+p=ggplot(data=research, mapping=aes(x=sqrt(pdfDownloadsCount), y=sqrt(wosCountThru2011))) + geom_point(aes(color=journal)) + geom_smooth()+scale_color_brewer(palette="Accent")
+p+facet_grid(journal~immuno)
+```
+## Different types of plots using different geoms:
+
+Boxplot: 
+```{r}
+p_box <- ggplot(research, aes(x = journal,
+                              y = log10(wosCountThru2011 + 1))) +
+  geom_boxplot() +
+  scale_y_continuous(breaks = c(1, 3), labels = c(10, 1000))
+p_box
+```
+
+Barplot: lets plot the number of tweets:
+```{r}
+tweets_per_journal=research %>% group_by(journal) %>%
+  summarize(tot_articles = n(), #n() gives number of elements in category
+            mean_tweets=mean(backtweetsCount) ,
+            sem_tweets=sd(backtweetsCount)/ sqrt(tot_articles))
+tweets_per_journal
+```
+
+Now for the code that actually plots the graph:
+```{r}
+tweets_bar <- ggplot(tweets_per_journal, aes(x = journal, 
+                                             y = mean_tweets)) +
+  geom_bar(stat = "identity")
+tweets_bar
+```
+Now we can add error bars, using "width" to make sure they are not too wide:
+```{r}
+tweets_bar <- ggplot(tweets_per_journal, aes(x = journal, y = mean)) +
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin = mean - sem, ymax = mean + sem), width = 0.1)
+tweets_bar
+```
+
+Finally we will add text above the error bars showing the number of articles:
+```{r}
+tweets_bar <- ggplot(tweets_per_journal, aes(x = journal, y = mean)) +
+  geom_bar(stat = "identity") +
+  geom_errorbar(aes(ymin = mean - sem, ymax = mean + sem), width = 0.1) +
+  geom_text(aes(label = num))
+tweets_bar
+```
+
+Note: using hjust and vjust for horizontal and vertical justification.
+
+We can also easily convert the barplot into points only:
+```{r}
+tweets_point <- ggplot(tweets_per_journal, aes(x = journal, y = mean)) +
+  geom_point() + 
+  geom_errorbar(aes(ymin = mean - sem, ymax = mean + sem), width = 0.1) +
+  geom_text(aes(label = num), hjust = 0, vjust = 0)
+tweets_point
+```
+
+### Challenge: ggplot2
+Modify the dplyr code above to calculate the mean, SEM, and sample size of the number of article tweets per journal and per year. Use facet_wrap to make a separate subplot per year.
+
+```{r}
+tweets=research %>% group_by(journal,year) %>%
+  summarize(ss=n(),
+            mean=mean(backtweetsCount) ,
+            sem=sd(backtweetsCount)/ sqrt(ss))
+tweets
+```
+
+```{r}
+tweets_plot=ggplot(tweets, aes(x=journal, y=mean)) + 
+geom_bar(stat="identity")+
+geom_errorbar(aes(ymin=mean-sem, ymax=mean+sem), width=0.1)+
+  geom_text(aes(label=ss), hjust=0, vjust=0)+facet_wrap(~year)
+```
+
+Could also change geom_ bar to geom_ point to make it points instead of bars.
+
+## Customizing the plot
+
+Labels and background:
+```{r}
+tweets_bar + labs(title="Mean tweets per journal per year",x="Journal",y="mean number of tweets") + 
+  theme_minimal() #gets rid of gray background
+```
+
+Other themes are theme_ bw, theme_ classic, etc.
+
+At top of r script, to make all the plots have the same theme, use:
+```{r}
+theme_set(theme_bw())
+```
+
+##Look online for manipulating the legend
+
+# Day 2
+
+# Git and version control
+## Rationale, setup, and adding edits
+Why use version control?  
+* Backup of work  
+* Record of how results were obtained at each stage  
+* Save things across different computers/share data  
+* Share with group members  
+* "Electronic lab notebook"  
+
+git_commands.txt in class dropbox folder
+
+How to use:  
+
+Settings:  
+git config --global user.name "Sophia Uddin"   
+git config --global user.email "sophiauddin@uchicago.edu"  
+git config --global color.ui "auto"  
+git config --global core.edit or "nano -w" (-w helps with line breaks)  
+
+Starting a project:
+* Make a folder for it (called "planets" for class) 
+* git init makes "planets" a repository and tracks everything inside it  
+* ls -a shows hidden files (hidden folders store old versions; deleting them makes it no longer a git repository)
+* Don't make a git repository inside another! It will track changes of "track changes"...the repository already tracks all the changes.
+
+Adding content:  
+* "nano" opens text editor
+* Save something in this folder (here, mars.txt)  
+* To begin tracking this file:  
+1. git add mars.txt (adds to staging area)  
+2. git commit -m (save changes, -m allows saving a message, which should be kept short)  
+Git does NOT save changes automatically; you have to tell it when to do that!  
+
+To see if you still have to save or commit changes:  
+* Type "git status"
+
+Seeing history of changes:  
+* git log: gives "barcode" of old commits plus messages  
+* Can use top several characters of barcode to look up  
+* Changes are stored in hidden files  
+
+Editing documents:  
+* nano mars.txt --> edit  
+* git diff (checks which changes were made)  
+* git add (staging area) and then git commit -m "msg"  
+* Comparing changes from something staged to last version: git diff --staged
+
+### Challenge:
+Create a new Git repository called bio. Write a 3-line bio for yourself in a file called me.txt, commit changes, and modify one line, add a 4th line, and display the differences.
+
+## Looking at old versions
+
+### What changes did I make?
+Type "git diff HEAD~1 mars.txt" (compares 1 commit back from current version)  
+Use ~2 to look 2 versions back, etc.
+
+Use identifier from "barcode": git diff f4fe58543 mars.txt (using first few characters from barcode)
+
+Comparing 2 previous versions: git diff 50f5b..f4fe58543 mars.txt (using 2 separate "barcodes")  
+
+###How to retrieve an old version
+git checkout HEAD mars.txt (checks out last committed version)  
+New edits will be GONE unless you saved them as something else (this is very helpful if you accidentally save over something that was better)  
+
+## What if there are things we don't want to track (e.g. raw data?)
+Generate ignore file: type the following:  
+
+* nano .gitignore  
+* type what to ignore e.g. results/ (everything in results folder), and everything.dat  
+* Make sure to commit the git ignore file (staging and committing)  
+* What's in my ignore file? Type git status --ignore or cat .gitignore
+
+##Github: github.com
+
+###Uploading changes
+Create a repository on github (it's public)  
+Code is online: for git remote add origin...  
+To see if it worked: type git remote -v  
+Sets connection with remote repository; now type:  
+git push origin master (pushes to origin, which is remote cloud), and input UN and PW  
+Note that things that are "ignored" do not get uploaded :)
+
+###Downloading changes
+Type:  
+git pull origin master
+
+## Syncing across computers
+
+### Your own computers (work & home)
+Prep:  
+* Clone a directory from the internet onto the computer (e.g. onto your home computer)  
+* git clone https://...(link from github)  
+* Auto sets up connection with remote
+
+Now suppose you changed a file.
+
+* "git push origin master" to upload changes  
+* "git pull origin master" on your work computer to get the changes you made at home  
+
+### Syncing with collaborators or friends
+
+Suppose you change something on your own computer; make sure you save and push to the cloud.
+
+Now suppose that your friend/collaborator is also editing. They push changes to the same cloud...you will get an error message saying that this version is behind the remote copy.
+
+It WILL NOT allow you to upload this way:  
+1. Pull down what's currently in github (will get a conflict message)  
+2. Conflicts happen when things are on the same line.  
+3. Reconcile the differences (go to the document; git has added flags to show where things don't agree)   
+4.  Git will now allow uploading (note this means that whoever gets there last has the "last word")  
+5. When the other person pulls down, it will be this resolved version.  
+
+### Branches
+
+Testing out ideas; can merge back with other changes. Better than making a copy of the folder.  
+Branch 1 is the master branch (default); to add a branch, type:  
+git branch experimental (experimental is the name of the branch)  
+
+git branch: see the branches  
+git checkout experimental = switch to experimental branch  
+Everything here is copied over from master branch; we can test things here but it won't change master.
+
+To put this on github:  
+git push origin experimental (the last word here is the github branch: it will create a new experimental branch on github)
+
+To merge this back with the master branch:  
+* Be in the master branch (the one you want to merge into)  
+* Type git merge experimental
+* git branch -d experimental (deletes the branch)  
+* git push origin :experimental to delete the experimental branch on github  
+
+### Challenge
+1. Create branch called grad_school in bio folder  
+cd  
+cd bio  
+git branch grad_school  
+git checkout grad_school  
+2. Create file called thesis and write one line about research  
+nano thesis.txt  
+git add thesis.txt  
+git commit -m "Added blurb about thesis"  
+3. Merge changes back to master branch of bio.  
+git checkout master  
+git merge grad_school  
+
+## How to edit other people's work/prevent others from taking over your folder
+
+Put a version of this under your own account name (you can't push to other people's accounts)
+
+Forking a remote repository: copy into your own github account; THIS one you can push back and forth from.
+
+Afterwards, submit a pull request; the owner has to review the changes before they get added.
+
+Steps:  
+1. Hit fork in upper right corner  
+2. Clone the directory from YOUR forkme account into your home directory (or wherever you want)  
+3. Set an upstream: git remote add upstream https:// (your collaborator's github forkme) - we decided to name it upstream, can name it anything. This allows us to pull down changes that the owner has made.  
+4. git pull upstream master (pulls from collaborator's master branch)  
+5. Make some changes, new files, etc.  
+6. git push origin master (push your changes to your OWN github)  
+7. Issue a pull request (to request to push stuff to your collaborator) by using the buttons on the github website; exchange comments if necessary   
+
+## Challenge
+Make altmetrics folder a git repository and upload it. Don't forget a gitignore file for the data itself!
+
+1. cd; cd altmetrics; git init  
+2. nano .gitignore; data/  
+3. git remote add origin https://...link from website  
+4. git push origin master
+
